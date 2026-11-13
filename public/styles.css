@@ -507,19 +507,19 @@ input:focus-visible {
     height: 100%;
     overflow: visible;
     pointer-events: none;
-    transition: filter 500ms ease;
+    transition: filter 160ms ease;
 }
 
 .poste {
     fill: url(#madera-poste);
     stroke: #38291f;
     stroke-width: 1;
-    transition: fill 500ms ease;
+    transition: fill 160ms ease;
 }
 
 .poste-sombra {
     fill: #432a1c;
-    transition: opacity 500ms ease;
+    transition: opacity 160ms ease;
 }
 
 .wood-neck { fill: url(#madera-base); }
@@ -541,19 +541,19 @@ input:focus-visible {
     fill: url(#tela-pantalla);
     stroke: #51463a;
     stroke-width: 2;
-    transition: fill 650ms ease, filter 650ms ease;
+    transition: fill 160ms ease, filter 160ms ease;
 }
 
 .pliegue-oscuro {
     fill: #756755;
     opacity: 0.95;
-    transition: fill 650ms ease, opacity 650ms ease;
+    transition: fill 160ms ease, opacity 160ms ease;
 }
 
 .pliegue-medio {
     fill: #c4b397;
     opacity: 0.88;
-    transition: fill 650ms ease, opacity 650ms ease;
+    transition: fill 160ms ease, opacity 160ms ease;
 }
 
 .linea-brillo {
@@ -562,7 +562,7 @@ input:focus-visible {
     stroke-width: 2.5;
     stroke-linecap: round;
     opacity: 0.65;
-    transition: stroke 650ms ease, opacity 650ms ease;
+    transition: stroke 160ms ease, opacity 160ms ease;
 }
 
 .bombilla {
@@ -570,7 +570,7 @@ input:focus-visible {
     stroke: #665340;
     stroke-width: 2;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
-    transition: fill 450ms ease, filter 650ms ease;
+    transition: fill 120ms ease, filter 120ms ease;
 }
 
 .filamento {
@@ -578,7 +578,7 @@ input:focus-visible {
     stroke: #69533b;
     stroke-width: 2;
     stroke-linecap: round;
-    transition: stroke 450ms ease, filter 450ms ease;
+    transition: stroke 120ms ease, filter 120ms ease;
 }
 
 .tirador {
@@ -622,7 +622,7 @@ input:focus-visible {
     border-radius: 48% 48% 45% 45%;
     background: radial-gradient(ellipse at 35% 25%, #d7c09a, #80684e 65%, #47382b);
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.42);
-    transition: background 450ms ease, box-shadow 450ms ease;
+    transition: background 160ms ease, box-shadow 160ms ease;
 }
 
 .resplandor-ambiente,
@@ -634,7 +634,7 @@ input:focus-visible {
     pointer-events: none;
     opacity: 0;
     transform: translateX(-50%);
-    transition: opacity 750ms ease;
+    transition: opacity 160ms ease;
 }
 
 .resplandor-ambiente {

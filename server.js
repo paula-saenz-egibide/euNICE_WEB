@@ -610,7 +610,6 @@ mqttClient.on('message', (topic, message) => {
 
     if (topic === 'euNICE/data/temperatura') {
         estadoActual.temperatura = parseFloat(msg);
-        estadoActual.sistema_encendido = true;
     }
     if (topic === 'euNICE/data/humedad') {
         estadoActual.humedad = parseFloat(msg);

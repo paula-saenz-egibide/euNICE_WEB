@@ -1,5 +1,6 @@
 import time
 import json
+import threading
 from datetime import datetime
 
 import board
@@ -63,6 +64,7 @@ sistema_encendido = False
 estado_ventilador = "apagado"
 modo_sistema = "automatico"
 accion_termica_actual = "apagado"
+candado_sistema = threading.Lock()
 
 color_frio = (0, 0, 1)
 color_calor = (1, 0, 0)
@@ -84,25 +86,27 @@ def feedback_denegado_valido(denegacion, sistema_activo, modo, accion_termica, v
 
 def encender_sistema():
     global sistema_encendido
-    if not sistema_encendido:
-        sistema_encendido = True
-        lcd.clear()
-        print("\n>>> Sistema ENCENDIDO (Recogiendo datos...)\n")
-        cliente_mqtt.publish(TOPIC_LED, "sistema_encendido")
-        lcd.write_string('Sistema ON\r\nLeyendo sensor..')
+    with candado_sistema:
+        if not sistema_encendido:
+            sistema_encendido = True
+            lcd.clear()
+            print("\n>>> Sistema ENCENDIDO (Recogiendo datos...)\n")
+            cliente_mqtt.publish(TOPIC_LED, "sistema_encendido")
+            lcd.write_string('Sistema ON\r\nLeyendo sensor..')
 
 
 def apagar_sistema():
     global sistema_encendido, estado_ventilador
-    if sistema_encendido:
-        sistema_encendido = False
-        lcd.clear()
-        print("\n>>> Sistema APAGADO (Envío de datos detenido)\n")
-        led_rgb.off()
-        GPIO.output(PIN_RELE_VENTILADOR, GPIO.LOW)
-        estado_ventilador = "apagado"
-        cliente_mqtt.publish(TOPIC_LED, "sistema_apagado")
-        cliente_mqtt.publish(TOPIC_VENTILADOR, "ventilador_apagado")
+    with candado_sistema:
+        if sistema_encendido:
+            sistema_encendido = False
+            lcd.clear()
+            print("\n>>> Sistema APAGADO (Envío de datos detenido)\n")
+            led_rgb.off()
+            GPIO.output(PIN_RELE_VENTILADOR, GPIO.LOW)
+            estado_ventilador = "apagado"
+            cliente_mqtt.publish(TOPIC_LED, "sistema_apagado")
+            cliente_mqtt.publish(TOPIC_VENTILADOR, "ventilador_apagado")
 
 
 def alternar_sistema_por_boton():
@@ -254,52 +258,56 @@ try:
                     time.sleep(2.0)
                     continue
 
-                if sensor_luz.is_pressed:
-                    accion_luz = "Apagar luces"
-                    texto_luz_lcd = "LUZ"
-                else:
-                    accion_luz = "Encender luces"
-                    texto_luz_lcd = "OSC"
+                with candado_sistema:
+                    if not sistema_encendido:
+                        continue
 
-                lcd.clear()
-                lcd.write_string(f'T:{temperatura_c}C {texto_luz_lcd}\r\nH:{humedad}%')
+                    if sensor_luz.is_pressed:
+                        accion_luz = "Apagar luces"
+                        texto_luz_lcd = "LUZ"
+                    else:
+                        accion_luz = "Encender luces"
+                        texto_luz_lcd = "OSC"
 
-                if temperatura_c < TEMP_MINIMA:
-                    led_rgb.color = color_frio
-                    color_led_texto = "frio_custom"
-                    estado_deseado_termico = "calefaccion"
-                elif temperatura_c > TEMP_MAXIMA:
-                    led_rgb.color = color_calor
-                    color_led_texto = "calor_custom"
-                    estado_deseado_termico = "aire_acondicionado"
-                else:
-                    led_rgb.color = color_neutro
-                    color_led_texto = "neutro_custom"
-                    estado_deseado_termico = "apagado"
+                    lcd.clear()
+                    lcd.write_string(f'T:{temperatura_c}C {texto_luz_lcd}\r\nH:{humedad}%')
 
-                accion_termica_actual = estado_deseado_termico
-                if modo_sistema == "automatico":
-                    if estado_deseado_termico != estado_ventilador:
-                        if estado_deseado_termico == "apagado":
-                            GPIO.output(PIN_RELE_VENTILADOR, GPIO.LOW)
-                        else:
-                            GPIO.output(PIN_RELE_VENTILADOR, GPIO.HIGH)
-                        estado_ventilador = estado_deseado_termico
+                    if temperatura_c < TEMP_MINIMA:
+                        led_rgb.color = color_frio
+                        color_led_texto = "frio_custom"
+                        estado_deseado_termico = "calefaccion"
+                    elif temperatura_c > TEMP_MAXIMA:
+                        led_rgb.color = color_calor
+                        color_led_texto = "calor_custom"
+                        estado_deseado_termico = "aire_acondicionado"
+                    else:
+                        led_rgb.color = color_neutro
+                        color_led_texto = "neutro_custom"
+                        estado_deseado_termico = "apagado"
 
-                print(
-                    f"[{modo_sistema.upper()}] Temp: {temperatura_c}°C | "
-                    f"Hum: {humedad}% | Vent: {estado_ventilador.upper()} | "
-                    f"Acción Luz: {accion_luz}"
-                )
+                    accion_termica_actual = estado_deseado_termico
+                    if modo_sistema == "automatico":
+                        if estado_deseado_termico != estado_ventilador:
+                            if estado_deseado_termico == "apagado":
+                                GPIO.output(PIN_RELE_VENTILADOR, GPIO.LOW)
+                            else:
+                                GPIO.output(PIN_RELE_VENTILADOR, GPIO.HIGH)
+                            estado_ventilador = estado_deseado_termico
 
-                cliente_mqtt.publish(TOPIC_TEMPERATURA, temperatura_c)
-                cliente_mqtt.publish(TOPIC_HUMEDAD, humedad)
-                cliente_mqtt.publish(TOPIC_LUZ, accion_luz)
-                cliente_mqtt.publish(TOPIC_LED, color_led_texto)
-                cliente_mqtt.publish(
-                    TOPIC_VENTILADOR,
-                    f"ventilador_{estado_ventilador}"
-                )
+                    print(
+                        f"[{modo_sistema.upper()}] Temp: {temperatura_c}°C | "
+                        f"Hum: {humedad}% | Vent: {estado_ventilador.upper()} | "
+                        f"Acción Luz: {accion_luz}"
+                    )
+
+                    cliente_mqtt.publish(TOPIC_TEMPERATURA, temperatura_c)
+                    cliente_mqtt.publish(TOPIC_HUMEDAD, humedad)
+                    cliente_mqtt.publish(TOPIC_LUZ, accion_luz)
+                    cliente_mqtt.publish(TOPIC_LED, color_led_texto)
+                    cliente_mqtt.publish(
+                        TOPIC_VENTILADOR,
+                        f"ventilador_{estado_ventilador}"
+                    )
 
             except RuntimeError:
                 time.sleep(2.0)
