@@ -8,18 +8,18 @@
     <script>
         document.documentElement.dataset.theme = localStorage.getItem('eunice-tema') || 'light';
     </script>
-    <link rel="stylesheet" href="/styles.css?v=14">
+    <link rel="stylesheet" href="/styles.css?v=24">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
     <div id="pantalla-inicio" class="pantalla activa">
         <main class="inicio-layout">
+            <a class="marca inicio-marca" href="/" aria-label="euNICE inicio">
+                <span class="marca-simbolo" aria-hidden="true"><span></span><span></span><span></span></span>
+                <span>euNICE</span>
+            </a>
             <section class="inicio-mensaje">
-                <a class="marca" href="/" aria-label="euNICE inicio">
-                    <span class="marca-simbolo" aria-hidden="true"><span></span><span></span><span></span></span>
-                    <span>euNICE</span>
-                </a>
                 <div class="inicio-copy">
                     <h1>Control ambiental</h1>
                     <div class="estado-resumen">
@@ -315,6 +315,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=7"></script>
+    <script src="/app.js?v=11"></script>
 </body>
 </html>
