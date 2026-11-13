@@ -18,6 +18,7 @@ const estadoTextoInicio = document.getElementById('estado-texto-inicio');
 const estadoTextoHero = document.getElementById('estado-texto-hero');
 const btnPower = document.getElementById('btn-power');
 const btnPowerHero = document.getElementById('btn-power-hero');
+const interruptorLampara = document.getElementById('interruptor-lampara');
 const btnEntrar = document.getElementById('btn-entrar');
 const modalFeedback = document.getElementById('modal-feedback');
 const btnAceptarFeedback = document.getElementById('btn-aceptar-feedback');
@@ -80,10 +81,11 @@ function escaparHtml(valor) {
 
 // 1. Escuchar datos en tiempo real desde el servidor
 socket.on('datos_actualizados', (datos) => {
+    const estabaEncendido = sistemaActivo;
     sistemaActivo = datos.sistema_encendido;
     actualizarUI(datos);
 
-    evaluarNecesidadFeedback(datos);
+    evaluarNecesidadFeedback(datos, sistemaActivo && !estabaEncendido);
 });
 
 socket.on('historico_actualizado', ({ fecha, registros }) => {
@@ -115,7 +117,14 @@ socket.on('configuracion_actualizada', (configuracion) => {
 });
 
 socket.on('error_persistencia', mensaje => alert(mensaje));
-socket.on('error_comando', mensaje => alert(mensaje));
+socket.on('error_comando', mensaje => {
+    interruptorLampara.checked = sistemaActivo;
+    alert(mensaje);
+});
+
+interruptorLampara.addEventListener('change', () => {
+    cambiarEstadoSistema(interruptorLampara.checked);
+});
 
 function actualizarControlTema() {
     const temaOscuro = document.documentElement.dataset.theme === 'dark';
@@ -145,7 +154,7 @@ function alternarTema() {
 
 actualizarControlTema();
 
-function evaluarNecesidadFeedback(datos) {
+function evaluarNecesidadFeedback(datos, omitirSolicitud = false) {
     if (pausarActualizaciones) return;
 
     let accionNecesaria = '';
@@ -165,7 +174,7 @@ function evaluarNecesidadFeedback(datos) {
 
     if (transicion !== ultimaTransicionFeedback) {
         ultimaTransicionFeedback = transicion;
-        if (necesitaCambio) {
+        if (necesitaCambio && !omitirSolicitud) {
             solicitarFeedback(accionNecesaria, datos.temperatura, accionActual);
         }
     }
@@ -294,8 +303,9 @@ function cambiarTipoGrafico() {
 
 // 3. Actualizar la interfaz visual
 function actualizarUI(datos) {
+    interruptorLampara.checked = datos.sistema_encendido;
     if (datos.sistema_encendido) {
-        animInicio.className = 'animacion-cozy encendido';
+        animInicio.className = 'animacion-cozy animacion-principal encendido';
         animHero.className = 'animacion-cozy pequeña encendido';
 
         estadoTextoInicio.innerText = 'Sistema encendido';
@@ -308,7 +318,7 @@ function actualizarUI(datos) {
 
         btnEntrar.style.display = 'inline-block';
     } else {
-        animInicio.className = 'animacion-cozy apagado';
+        animInicio.className = 'animacion-cozy animacion-principal apagado';
         animHero.className = 'animacion-cozy pequeña apagado';
 
         estadoTextoInicio.innerText = 'Sistema apagado';
@@ -332,9 +342,14 @@ function actualizarUI(datos) {
 }
 
 // 4. Encender y Apagar por MQTT
-function togglePower() {
-    const accion = sistemaActivo ? "apagar" : "encender";
+function cambiarEstadoSistema(encender) {
+    if (encender === sistemaActivo) return;
+    const accion = encender ? "encender" : "apagar";
     socket.emit('enviar_comando', { "acción": accion });
+}
+
+function togglePower() {
+    cambiarEstadoSistema(!sistemaActivo);
 }
 
 // 5. Cambiar modo (Automático / Feedback)

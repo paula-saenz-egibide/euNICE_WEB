@@ -8,7 +8,7 @@
     <script>
         document.documentElement.dataset.theme = localStorage.getItem('eunice-tema') || 'light';
     </script>
-    <link rel="stylesheet" href="/styles.css?v=9">
+    <link rel="stylesheet" href="/styles.css?v=14">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 </head>
@@ -32,11 +32,76 @@
                     </div>
                 </div>
             </section>
-            <aside class="inicio-visual" aria-hidden="true">
+            <aside class="inicio-visual" aria-label="Lámpara interactiva">
                 <div class="visual-orbita orbita-externa"></div>
                 <div class="visual-orbita orbita-interna"></div>
                 <div class="visual-centro">
-                    <div class="animacion-cozy apagado" id="animacion-principal">
+                    <input type="checkbox" id="interruptor-lampara" class="interruptor-lampara" aria-label="Encender o apagar la lámpara">
+                    <div class="contenedor-lampara">
+                        <div class="resplandor-ambiente"></div>
+                        <div class="haz-superior"></div>
+                        <div class="luz-suelo"></div>
+                        <label for="interruptor-lampara" class="tirador" title="Tira de la cuerda para encender o apagar">
+                            <span class="cuerda"></span>
+                            <span class="bolita"></span>
+                        </label>
+                        <svg class="ilustracion-lampara" viewBox="0 0 300 620" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <defs>
+                                <linearGradient id="tela-pantalla" x1="0" y1="0" x2="1" y2="0">
+                                    <stop offset="0" stop-color="#887966" />
+                                    <stop offset=".2" stop-color="#d0c0a5" />
+                                    <stop offset=".48" stop-color="#b4a38c" />
+                                    <stop offset=".75" stop-color="#d4c3a8" />
+                                    <stop offset="1" stop-color="#716351" />
+                                </linearGradient>
+                                <linearGradient id="madera-poste" x1="0" y1="0" x2="1" y2="0">
+                                    <stop offset="0" stop-color="#382b24" />
+                                    <stop offset=".32" stop-color="#795b45" />
+                                    <stop offset=".55" stop-color="#957254" />
+                                    <stop offset=".78" stop-color="#624735" />
+                                    <stop offset="1" stop-color="#382b24" />
+                                </linearGradient>
+                                <linearGradient id="madera-base" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0" stop-color="#987653" />
+                                    <stop offset=".45" stop-color="#674a35" />
+                                    <stop offset="1" stop-color="#38291f" />
+                                </linearGradient>
+                                <linearGradient id="cristal-bombilla" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0" stop-color="#ddc99f" />
+                                    <stop offset=".55" stop-color="#a88d69" />
+                                    <stop offset="1" stop-color="#59483a" />
+                                </linearGradient>
+                            </defs>
+                            <rect class="poste" x="146" y="160" width="8" height="395" rx="2" />
+                            <rect class="poste-sombra" x="146" y="165" width="8" height="25" />
+                            <g class="base-lampara">
+                                <path class="wood-neck" d="M 140 555 Q 150 535 160 555 L 168 572 L 132 572 Z" />
+                                <ellipse class="wood-bottom" cx="150" cy="586" rx="48" ry="18" />
+                                <ellipse class="wood-middle" cx="150" cy="580" rx="42" ry="15" />
+                                <ellipse class="wood-upper" cx="150" cy="574" rx="33" ry="11" />
+                                <ellipse class="wood-top" cx="150" cy="569" rx="24" ry="8" />
+                                <path class="anillo-base" d="M 110 584 Q 150 600 190 584" />
+                                <path class="anillo-base" d="M 116 577 Q 150 591 184 577" />
+                                <path class="anillo-base" d="M 125 571 Q 150 582 175 571" />
+                                <path class="anillo-brillo" d="M 105 591 Q 150 606 195 591" />
+                            </g>
+                            <g class="pantalla-grupo">
+                                <path class="pantalla-fondo" d="M 114 50 L 186 50 L 214 166 Q 150 176 86 166 Z" />
+                                <polygon class="pliegue-oscuro" points="116,52 126,52 106,167 91,165" />
+                                <polygon class="pliegue-oscuro" points="147,50 155,50 160,170 144,170" />
+                                <polygon class="pliegue-oscuro" points="175,52 183,52 206,166 192,168" />
+                                <polygon class="pliegue-medio" points="128,50 138,50 126,169 112,167" />
+                                <polygon class="pliegue-medio" points="162,50 171,50 185,169 170,170" />
+                                <path class="linea-brillo" d="M 129 60 L 109 160" />
+                                <path class="linea-brillo" d="M 141 56 L 132 164" />
+                                <path class="linea-brillo" d="M 159 58 L 166 163" />
+                                <path class="linea-brillo" d="M 173 56 L 196 159" />
+                            </g>
+                            <ellipse class="bombilla" cx="150" cy="172" rx="10" ry="12" />
+                            <path class="filamento" d="M 146 173 Q 150 166 154 173" />
+                        </svg>
+                    </div>
+                    <div class="animacion-cozy animacion-principal apagado" id="animacion-principal" aria-hidden="true">
                         <div class="hoja hoja-izq"></div>
                         <div class="hoja hoja-der"></div>
                         <div class="tallo"></div>
@@ -250,6 +315,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=4"></script>
+    <script src="/app.js?v=7"></script>
 </body>
 </html>
