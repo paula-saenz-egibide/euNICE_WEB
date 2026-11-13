@@ -1,0 +1,757 @@
+const express = require('express');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const ExcelJS = require('exceljs');
+const { Server } = require('socket.io');
+const mqtt = require('mqtt');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+const broker = process.env.MQTT_BROKER || 'mqtt://broker.emqx.io:1883';
+const mqttClient = mqtt.connect(broker);
+const dataDirectory = process.env.EUNICE_DATA_DIR || path.join(__dirname, 'data');
+const historyFile = path.join(dataDirectory, 'records.jsonl');
+const dailyHistoryDirectory = path.join(dataDirectory, 'history');
+const settingsFile = path.join(dataDirectory, 'settings.json');
+let mqttConnected = false;
+let ultimoDatoHardware = null;
+
+const defaultSettings = {
+    modo: 'automatico',
+    colores: {
+        frio: '#0000ff',
+        neutro: '#00ff00',
+        calor: '#ff0000'
+    }
+};
+
+fs.mkdirSync(dataDirectory, { recursive: true });
+fs.mkdirSync(dailyHistoryDirectory, { recursive: true });
+
+function isValidDate(date) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    const parsedDate = new Date(`${date}T00:00:00`);
+    return !Number.isNaN(parsedDate.getTime()) && localDateString(parsedDate) === date;
+}
+
+function localDateString(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function validateSettings(settings) {
+    if (!settings || !['automatico', 'feedback'].includes(settings.modo)) {
+        throw new Error('El modo guardado debe ser automatico o feedback.');
+    }
+
+    for (const colorName of ['frio', 'neutro', 'calor']) {
+        if (!/^#[0-9a-f]{6}$/i.test(settings.colores?.[colorName] || '')) {
+            throw new Error(`El color "${colorName}" guardado no es válido.`);
+        }
+    }
+    return settings;
+}
+
+function loadSettings() {
+    if (!fs.existsSync(settingsFile)) {
+        fs.writeFileSync(settingsFile, `${JSON.stringify(defaultSettings, null, 2)}\n`);
+        return structuredClone(defaultSettings);
+    }
+    return validateSettings(JSON.parse(fs.readFileSync(settingsFile, 'utf8')));
+}
+
+function leerRegistrosJsonl(filePath) {
+    if (!fs.existsSync(filePath)) return [];
+
+    return fs.readFileSync(filePath, 'utf8').split(/\r?\n/).filter(Boolean).map((line, index) => {
+        let record;
+        try {
+            record = JSON.parse(line);
+        } catch (error) {
+            throw new Error(`Histórico inválido en ${filePath}, línea ${index + 1}: ${error.message}`);
+        }
+        if (!isValidDate(record.fecha) || typeof record.hora !== 'string') {
+            throw new Error(`Registro inválido en ${filePath}, línea ${index + 1}.`);
+        }
+        return record;
+    });
+}
+
+function cargarHistoricoDiario() {
+    const files = fs.readdirSync(dailyHistoryDirectory)
+        .filter(file => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(file))
+        .sort();
+    return files.flatMap(file => leerRegistrosJsonl(path.join(dailyHistoryDirectory, file)));
+}
+
+function migrarHistoricoAnterior() {
+    const registros = leerRegistrosJsonl(historyFile);
+    const porFecha = new Map();
+    for (const registro of registros) {
+        if (!porFecha.has(registro.fecha)) porFecha.set(registro.fecha, []);
+        porFecha.get(registro.fecha).push(registro);
+    }
+
+    for (const [fecha, datos] of porFecha) {
+        const filePath = path.join(dailyHistoryDirectory, `${fecha}.jsonl`);
+        if (!fs.existsSync(filePath)) {
+            fs.writeFileSync(filePath, `${datos.map(registro => JSON.stringify(registro)).join('\n')}\n`);
+        }
+    }
+    return registros;
+}
+
+function guardarRegistrosDemostracion() {
+    const hoy = new Date();
+    for (let diasAtras = 1; diasAtras <= 7; diasAtras += 1) {
+        const dia = new Date(hoy);
+        dia.setDate(dia.getDate() - diasAtras);
+        const fecha = localDateString(dia);
+        const filePath = path.join(dailyHistoryDirectory, `${fecha}.jsonl`);
+        if (fs.existsSync(filePath)) continue;
+
+        const registros = [];
+        for (let hora = 0; hora < 24; hora += 2) {
+            const timestampLocal = new Date(dia);
+            timestampLocal.setHours(hora, 0, 0, 0);
+            const variacion = Math.sin((hora + diasAtras * 3) * Math.PI / 12);
+            const timestamp = timestampLocal.toISOString();
+            registros.push({
+                fecha,
+                hora: timestampLocal.toLocaleTimeString(),
+                timestamp,
+                temperatura: Number((22 + variacion * 3 + diasAtras * 0.15).toFixed(1)),
+                humedad: Math.round(48 + Math.cos((hora + diasAtras) * Math.PI / 12) * 12),
+                luz: hora >= 8 && hora <= 18 ? 'Encender luces' : 'Apagado',
+                ventilador: hora < 8 ? 'calefaccion' : 'apagado',
+                simulado: true
+            });
+        }
+        fs.writeFileSync(filePath, `${registros.map(registro => JSON.stringify(registro)).join('\n')}\n`);
+    }
+}
+
+function loadHistory() {
+    const files = fs.readdirSync(dailyHistoryDirectory)
+        .filter(file => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(file));
+    if (files.length > 0) return cargarHistoricoDiario();
+
+    if (fs.existsSync(historyFile)) {
+        const migratedRecords = migrarHistoricoAnterior();
+        if (migratedRecords.length > 0) return cargarHistoricoDiario();
+    }
+
+    return [];
+}
+
+let configuracion = loadSettings();
+let historico = loadHistory();
+guardarRegistrosDemostracion();
+historico = cargarHistoricoDiario().sort((a, b) => (
+    String(a.timestamp || `${a.fecha}T${a.hora}`).localeCompare(String(b.timestamp || `${b.fecha}T${b.hora}`))
+));
+let estadoActual = {
+    sistema_encendido: false,
+    temperatura: 0,
+    humedad: 0,
+    luz: '--',
+    ventilador: 'apagado'
+};
+
+function hexToRgb(hex) {
+    return [
+        parseInt(hex.slice(1, 3), 16),
+        parseInt(hex.slice(3, 5), 16),
+        parseInt(hex.slice(5, 7), 16)
+    ];
+}
+
+function rgbToHex(rgb) {
+    if (
+        !Array.isArray(rgb)
+        || rgb.length !== 3
+        || rgb.some(channel => !Number.isInteger(channel) || channel < 0 || channel > 255)
+    ) {
+        throw new Error('Los colores deben ser listas RGB con valores enteros de 0 a 255.');
+    }
+    return `#${rgb.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function escaparXml(valor) {
+    return String(valor).replace(/[&<>"']/g, caracter => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&apos;'
+    })[caracter]);
+}
+
+function crearSvgGrafica(registros, tipo) {
+    const ancho = 760;
+    const alto = 420;
+    const izquierda = 64;
+    const derecha = 24;
+    const arriba = 52;
+    const abajo = 70;
+    const anchoPlot = ancho - izquierda - derecha;
+    const altoPlot = alto - arriba - abajo;
+    const colores = ['#e07a5f', '#739b83', '#4a90e2'];
+    const fuente = 'Arial, sans-serif';
+    const encabezado = tipo === 'doughnut' ? 'Lecturas por rango de temperatura' : 'Temperatura y humedad';
+    const ejeY = (valor, minimo, maximo) => arriba + altoPlot - ((valor - minimo) / (maximo - minimo)) * altoPlot;
+    const formatoHora = indice => escaparXml(registros[indice].hora);
+    let contenido;
+
+    if (tipo === 'doughnut') {
+        const rangos = [
+            { nombre: 'Frío (<25 °C)', valor: registros.filter(registro => Number(registro.temperatura) < 25).length, color: colores[2] },
+            { nombre: 'Confort (25-28 °C)', valor: registros.filter(registro => Number(registro.temperatura) >= 25 && Number(registro.temperatura) <= 28).length, color: colores[1] },
+            { nombre: 'Calor (>28 °C)', valor: registros.filter(registro => Number(registro.temperatura) > 28).length, color: colores[0] }
+        ];
+        const total = rangos.reduce((suma, rango) => suma + rango.valor, 0);
+        let angulo = -Math.PI / 2;
+        const sectores = rangos.map(rango => {
+            const tramo = total ? (rango.valor / total) * Math.PI * 2 : 0;
+            const final = angulo + tramo;
+            const x1 = 230 + 120 * Math.cos(angulo);
+            const y1 = 220 + 120 * Math.sin(angulo);
+            const x2 = 230 + 120 * Math.cos(final);
+            const y2 = 220 + 120 * Math.sin(final);
+            const grande = tramo > Math.PI ? 1 : 0;
+            const path = rango.valor
+                ? `<path d="M230 220 L${x1.toFixed(2)} ${y1.toFixed(2)} A120 120 0 ${grande} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z" fill="${rango.color}" stroke="#fff" stroke-width="2"/>`
+                : '';
+            angulo = final;
+            return path;
+        }).join('');
+        const leyenda = rangos.map((rango, indice) => {
+            const y = 174 + indice * 42;
+            const porcentaje = total ? `${((rango.valor / total) * 100).toFixed(1)}%` : '0.0%';
+            return `<rect x="430" y="${y - 14}" width="16" height="16" rx="3" fill="${rango.color}"/><text x="458" y="${y}" font-family="${fuente}" font-size="16" fill="#34473f">${escaparXml(rango.nombre)}</text><text x="704" y="${y}" text-anchor="end" font-family="${fuente}" font-size="16" font-weight="700" fill="#34473f">${rango.valor} (${porcentaje})</text>`;
+        }).join('');
+        contenido = `${sectores}<circle cx="230" cy="220" r="67" fill="#fff"/><text x="230" y="215" text-anchor="middle" font-family="${fuente}" font-size="17" fill="#607068">Lecturas</text><text x="230" y="244" text-anchor="middle" font-family="${fuente}" font-size="25" font-weight="700" fill="#34473f">${total}</text>${leyenda}`;
+    } else {
+        const valores = registros.flatMap(registro => [Number(registro.temperatura), Number(registro.humedad)]).filter(Number.isFinite);
+        let minimo = Math.floor(Math.min(...valores));
+        let maximo = Math.ceil(Math.max(...valores));
+        if (minimo === maximo) {
+            minimo -= 1;
+            maximo += 1;
+        }
+        const tickCount = 5;
+        const ticks = Array.from({ length: tickCount + 1 }, (_, indice) => minimo + ((maximo - minimo) * indice / tickCount));
+        const grid = ticks.map(valor => {
+            const y = ejeY(valor, minimo, maximo);
+            return `<line x1="${izquierda}" y1="${y.toFixed(2)}" x2="${ancho - derecha}" y2="${y.toFixed(2)}" stroke="#e4eae5"/><text x="${izquierda - 12}" y="${(y + 5).toFixed(2)}" text-anchor="end" font-family="${fuente}" font-size="12" fill="#607068">${valor.toFixed(1)}</text>`;
+        }).join('');
+        const marcasTiempo = Math.min(7, registros.length);
+        const labels = Array.from({ length: marcasTiempo }, (_, indice) => {
+            const lectura = Math.round(indice * (registros.length - 1) / Math.max(1, marcasTiempo - 1));
+            const x = izquierda + (registros.length > 1 ? lectura / (registros.length - 1) : 0.5) * anchoPlot;
+            return `<text x="${x.toFixed(2)}" y="${alto - 34}" text-anchor="middle" font-family="${fuente}" font-size="11" fill="#607068">${formatoHora(lectura)}</text>`;
+        }).join('');
+        const datasets = [
+            { clave: 'temperatura', color: colores[0] },
+            { clave: 'humedad', color: colores[1] }
+        ];
+        const lineas = datasets.map(dataset => {
+            const puntos = registros.map((registro, indice) => {
+                const valor = Number(registro[dataset.clave]);
+                if (!Number.isFinite(valor)) return null;
+                const x = izquierda + (registros.length > 1 ? indice / (registros.length - 1) : 0.5) * anchoPlot;
+                return `${x.toFixed(2)},${ejeY(valor, minimo, maximo).toFixed(2)}`;
+            }).filter(Boolean).join(' ');
+            return `<polyline points="${puntos}" fill="none" stroke="${dataset.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+        }).join('');
+        const leyenda = datasets.map((dataset, indice) => {
+            const x = 278 + indice * 210;
+            const etiqueta = dataset.clave === 'temperatura' ? 'Temperatura (°C)' : 'Humedad (%)';
+            return `<line x1="${x}" y1="27" x2="${x + 28}" y2="27" stroke="${dataset.color}" stroke-width="3"/><text x="${x + 36}" y="32" font-family="${fuente}" font-size="14" fill="#34473f">${etiqueta}</text>`;
+        }).join('');
+        if (tipo === 'bar') {
+            const espacio = anchoPlot / Math.max(1, registros.length);
+            const barra = Math.max(1, Math.min(12, espacio * 0.34));
+            contenido = `${grid}${registros.map((registro, indice) => {
+                const centro = izquierda + (indice + 0.5) * espacio;
+                return datasets.map((dataset, serie) => {
+                    const valor = Number(registro[dataset.clave]);
+                    if (!Number.isFinite(valor)) return '';
+                    const y = ejeY(valor, minimo, maximo);
+                    return `<rect x="${(centro + (serie ? 1 : -1) * barra / 2 - barra).toFixed(2)}" y="${y.toFixed(2)}" width="${barra.toFixed(2)}" height="${(arriba + altoPlot - y).toFixed(2)}" fill="${dataset.color}"/>`;
+                }).join('');
+            }).join('')}${labels}${leyenda}`;
+        } else {
+            contenido = `${grid}${lineas}${labels}${leyenda}`;
+        }
+        contenido += `<text x="${izquierda + anchoPlot / 2}" y="${alto - 8}" text-anchor="middle" font-family="${fuente}" font-size="12" fill="#607068">Hora</text><text transform="translate(18 ${arriba + altoPlot / 2}) rotate(-90)" text-anchor="middle" font-family="${fuente}" font-size="12" fill="#607068">Valor</text>`;
+    }
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${ancho}" height="${alto}" viewBox="0 0 ${ancho} ${alto}"><rect width="100%" height="100%" rx="12" fill="#ffffff"/><text x="32" y="34" font-family="${fuente}" font-size="18" font-weight="700" fill="#34473f">${encabezado}</text>${contenido}</svg>`;
+}
+
+function publicarConfiguracionHardware() {
+    const payload = {
+        modo: configuracion.modo,
+        config_led: {
+            frio: hexToRgb(configuracion.colores.frio),
+            neutro: hexToRgb(configuracion.colores.neutro),
+            calor: hexToRgb(configuracion.colores.calor)
+        }
+    };
+    mqttClient.publish(
+        'euNICE/comando/configuracion',
+        JSON.stringify(payload),
+        { retain: true },
+        error => {
+            if (error) console.error('Error al publicar la configuración persistente:', error.message);
+        }
+    );
+}
+
+function persistirConfiguracion(nuevaConfiguracion) {
+    validateSettings(nuevaConfiguracion);
+    const temporaryFile = `${settingsFile}.tmp`;
+    fs.writeFileSync(temporaryFile, `${JSON.stringify(nuevaConfiguracion, null, 2)}\n`);
+    fs.renameSync(temporaryFile, settingsFile);
+    configuracion = nuevaConfiguracion;
+    io.emit('configuracion_actualizada', configuracion);
+    publicarConfiguracionHardware();
+}
+
+function persistirRegistro(registro) {
+    try {
+        const historyFileForDay = path.join(dailyHistoryDirectory, `${registro.fecha}.jsonl`);
+        fs.appendFileSync(historyFileForDay, `${JSON.stringify(registro)}\n`);
+        historico.push(registro);
+        io.emit('historico_actualizado', {
+            fecha: registro.fecha,
+            registros: registrosDeFecha(registro.fecha),
+            simulado: false
+        });
+        io.emit('dias_disponibles', fechasDisponibles());
+    } catch (error) {
+        console.error('No se pudo guardar el registro histórico:', error);
+        io.emit('error_persistencia', 'No se pudo guardar el histórico en disco.');
+    }
+}
+
+function fechasDisponibles() {
+    return [...new Set(historico.map(record => record.fecha))].sort();
+}
+
+function registrosDeFecha(fecha) {
+    return historico.filter(record => record.fecha === fecha);
+}
+
+function emitirEstadoConexion(destino = io) {
+    destino.emit('conexion_estado', {
+        mqttConectado: mqttConnected,
+        ultimoDatoHardware
+    });
+}
+
+function publicarComando(comando, socket) {
+    mqttClient.publish('euNICE/comando/sistema', JSON.stringify(comando), error => {
+        if (error) {
+            console.error('Error al publicar el comando MQTT:', error.message);
+            socket.emit('error_comando', 'No se pudo enviar el comando al hardware.');
+        }
+    });
+}
+
+app.get('/api/exportar-excel', async (request, response, next) => {
+    const { fecha } = request.query;
+    const tiposGrafico = {
+        line: { nombre: 'Líneas', archivo: 'lineas' },
+        bar: { nombre: 'Barras', archivo: 'barras' },
+        doughnut: { nombre: 'Circular', archivo: 'circular' }
+    };
+    const tipo = request.query.tipo || 'line';
+    if (fecha !== undefined && !isValidDate(fecha)) {
+        response.status(400).send('La fecha solicitada no es válida.');
+        return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(tiposGrafico, tipo)) {
+        response.status(400).send('El tipo de gráfica solicitado no es válido.');
+        return;
+    }
+
+    try {
+        const registros = fecha ? registrosDeFecha(fecha) : historico;
+        if (registros.length === 0) {
+            response.status(404).send('No hay lecturas para la fecha seleccionada.');
+            return;
+        }
+
+        const simulados = registros.every(record => record.simulado === true);
+        const origen = simulados
+            ? 'Datos ficticios de demostración'
+            : registros.some(record => record.simulado === true)
+                ? 'Datos reales y de demostración'
+                : 'Datos registrados por el hardware';
+        const temperaturas = registros.map(record => Number(record.temperatura)).filter(Number.isFinite);
+        const humedades = registros.map(record => Number(record.humedad)).filter(Number.isFinite);
+        const media = valores => valores.length
+            ? valores.reduce((total, valor) => total + valor, 0) / valores.length
+            : 0;
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'euNICE';
+        workbook.created = new Date();
+        const colorPrincipal = 'FF34473F';
+        const colorAcento = 'FF739B83';
+        const estiloTitulo = {
+            font: { name: 'Aptos Display', bold: true, size: 18, color: { argb: 'FFFFFFFF' } },
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: colorPrincipal } },
+            alignment: { vertical: 'middle', horizontal: 'left' }
+        };
+        const estiloSubtitulo = {
+            font: { name: 'Aptos', size: 10, color: { argb: 'FF4C5A53' } },
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFF3EE' } },
+            alignment: { vertical: 'middle', horizontal: 'left' }
+        };
+
+        const grafica = workbook.addWorksheet('Datos de gráfica', {
+            views: [{ showGridLines: false, state: 'frozen', ySplit: 8 }]
+        });
+        const fechaTexto = fecha || 'Todo el histórico';
+        grafica.mergeCells('A1:C1');
+        grafica.getCell('A1').value = `euNICE | Gráfica de ${tiposGrafico[tipo].nombre.toLowerCase()}`;
+        Object.assign(grafica.getCell('A1'), estiloTitulo);
+        grafica.getRow(1).height = 34;
+
+        grafica.mergeCells('A2:C2');
+        grafica.getCell('A2').value = `Fecha: ${fechaTexto}   |   Gráfica: ${tiposGrafico[tipo].nombre}   |   Origen: ${origen}`;
+        Object.assign(grafica.getCell('A2'), estiloSubtitulo);
+        grafica.getRow(2).height = 23;
+
+        grafica.getRow(4).values = ['Lecturas', 'Temp. media (°C)', 'Humedad media (%)'];
+        grafica.getRow(5).values = [registros.length, media(temperaturas), media(humedades)];
+        grafica.getRow(4).eachCell({ includeEmpty: true }, cell => {
+            cell.font = { name: 'Aptos', bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colorAcento } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        grafica.getRow(5).eachCell(cell => {
+            cell.font = { name: 'Aptos', bold: true, size: 12, color: { argb: colorPrincipal } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F0' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        grafica.getRow(5).getCell(2).numFmt = '0.0';
+        grafica.getRow(5).getCell(3).numFmt = '0.0';
+        const imagenGrafica = workbook.addImage({
+            buffer: Buffer.from(crearSvgGrafica(registros, tipo)),
+            extension: 'svg'
+        });
+        grafica.addImage(imagenGrafica, {
+            tl: { col: 4, row: 3 },
+            ext: { width: 760, height: 420 }
+        });
+
+        const datosGrafica = tipo === 'doughnut'
+            ? [
+                ['Frío (<25 °C)', temperaturas.filter(value => value < 25).length],
+                ['Confort (25-28 °C)', temperaturas.filter(value => value >= 25 && value <= 28).length],
+                ['Calor (>28 °C)', temperaturas.filter(value => value > 28).length]
+            ]
+            : registros.map(record => [record.hora, record.temperatura, record.humedad]);
+        const columnasGrafica = tipo === 'doughnut'
+            ? [{ name: 'Rango de temperatura' }, { name: 'Lecturas' }]
+            : [
+                { name: 'Hora' },
+                { name: 'Temperatura (°C)' },
+                { name: 'Humedad (%)' }
+            ];
+        grafica.addTable({
+            name: 'DatosGrafica',
+            ref: 'A8',
+            headerRow: true,
+            style: { theme: 'TableStyleMedium4', showRowStripes: true },
+            columns: columnasGrafica,
+            rows: datosGrafica
+        });
+        grafica.getRow(8).height = 25;
+        grafica.getRow(8).eachCell(cell => {
+            cell.font = { name: 'Aptos', bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colorAcento } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        grafica.columns = [{ width: 28 }, { width: 22 }, { width: 22 }];
+        if (tipo !== 'doughnut') {
+            grafica.getColumn(2).numFmt = '0.0';
+            grafica.getColumn(3).numFmt = '0.0';
+        }
+
+        const lecturas = workbook.addWorksheet('Lecturas', {
+            views: [{ showGridLines: false, state: 'frozen', ySplit: 4 }]
+        });
+        lecturas.mergeCells('A1:G1');
+        lecturas.getCell('A1').value = 'euNICE | Lecturas del periodo';
+        Object.assign(lecturas.getCell('A1'), estiloTitulo);
+        lecturas.getRow(1).height = 34;
+        lecturas.mergeCells('A2:G2');
+        lecturas.getCell('A2').value = `Fecha: ${fechaTexto}   |   Origen: ${origen}`;
+        Object.assign(lecturas.getCell('A2'), estiloSubtitulo);
+        lecturas.addTable({
+            name: 'LecturasHistorico',
+            ref: 'A4',
+            headerRow: true,
+            style: { theme: 'TableStyleMedium4', showRowStripes: true },
+            columns: [
+                { name: 'Fecha' },
+                { name: 'Hora' },
+                { name: 'Temperatura (°C)' },
+                { name: 'Humedad (%)' },
+                { name: 'Iluminación' },
+                { name: 'Climatización' },
+                { name: 'Origen' }
+            ],
+            rows: registros.map(record => [
+                record.fecha,
+                record.hora,
+                record.temperatura,
+                record.humedad,
+                record.luz || '--',
+                record.ventilador || 'apagado',
+                record.simulado ? 'Demostración (ficticio)' : 'Hardware'
+            ])
+        });
+        lecturas.getRow(4).height = 25;
+        lecturas.getRow(4).eachCell(cell => {
+            cell.font = { name: 'Aptos', bold: true, color: { argb: 'FFFFFFFF' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colorAcento } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+        });
+        lecturas.columns = [
+            { width: 14 },
+            { width: 16 },
+            { width: 22 },
+            { width: 18 },
+            { width: 24 },
+            { width: 24 },
+            { width: 28 }
+        ];
+        lecturas.getColumn(3).numFmt = '0.0';
+        lecturas.getColumn(4).numFmt = '0.0';
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        response
+            .status(200)
+            .type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            .attachment(`euNICE_${fecha || 'historico'}_${tiposGrafico[tipo].archivo}${simulados ? '_demostracion' : ''}.xlsx`)
+            .send(Buffer.from(buffer));
+    } catch (error) {
+        next(error);
+    }
+});
+
+app.use((error, request, response, next) => {
+    console.error('Error al generar el Excel:', error);
+    if (response.headersSent) {
+        next(error);
+        return;
+    }
+    response.status(500).send('No se pudo generar el archivo Excel.');
+});
+
+mqttClient.on('connect', () => {
+    mqttConnected = true;
+    emitirEstadoConexion();
+    console.log('✅ Backend conectado al broker MQTT (broker.emqx.io)');
+    mqttClient.subscribe([
+        'euNICE/data/temperatura',
+        'euNICE/data/humedad',
+        'euNICE/data/luz',
+        'euNICE/data/led',
+        'euNICE/data/ventilador'
+    ], error => {
+        if (error) {
+            console.error('Error al suscribirse a los topics MQTT:', error.message);
+            return;
+        }
+        console.log('✅ Suscrito a los topics de datos euNICE');
+        publicarConfiguracionHardware();
+    });
+});
+
+mqttClient.on('reconnect', () => {
+    mqttConnected = false;
+    emitirEstadoConexion();
+    console.log('Reconectando al broker MQTT...');
+});
+
+mqttClient.on('close', () => {
+    mqttConnected = false;
+    emitirEstadoConexion();
+});
+
+mqttClient.on('offline', () => {
+    mqttConnected = false;
+    emitirEstadoConexion();
+});
+
+mqttClient.on('error', error => {
+    console.error('Error de conexión MQTT:', error.message);
+    emitirEstadoConexion();
+});
+
+mqttClient.on('message', (topic, message) => {
+    const msg = message.toString();
+    const ahora = new Date();
+    ultimoDatoHardware = ahora.toISOString();
+
+    if (topic === 'euNICE/data/temperatura') {
+        estadoActual.temperatura = parseFloat(msg);
+        estadoActual.sistema_encendido = true;
+    }
+    if (topic === 'euNICE/data/humedad') {
+        estadoActual.humedad = parseFloat(msg);
+    }
+    if (topic === 'euNICE/data/luz') {
+        estadoActual.luz = msg;
+    }
+    if (topic === 'euNICE/data/ventilador') {
+        estadoActual.ventilador = msg.replace(/^ventilador_/, '');
+    }
+    if (topic === 'euNICE/data/led') {
+        if (msg === 'sistema_apagado') {
+            estadoActual.sistema_encendido = false;
+            estadoActual.ventilador = 'apagado';
+        } else if (
+            msg === 'sistema_encendido'
+            || msg === 'frio_custom'
+            || msg === 'calor_custom'
+            || msg === 'neutro_custom'
+        ) {
+            estadoActual.sistema_encendido = true;
+        }
+    }
+
+    if (estadoActual.sistema_encendido && topic === 'euNICE/data/temperatura') {
+        persistirRegistro({
+            fecha: localDateString(ahora),
+            hora: ahora.toLocaleTimeString(),
+            timestamp: ahora.toISOString(),
+            temperatura: estadoActual.temperatura,
+            humedad: estadoActual.humedad,
+            luz: estadoActual.luz,
+            ventilador: estadoActual.ventilador
+        });
+    }
+
+    io.emit('datos_actualizados', estadoActual);
+    emitirEstadoConexion();
+});
+
+io.on('connection', socket => {
+    const hoy = localDateString(new Date());
+    socket.emit('historico_actualizado', { fecha: hoy, registros: registrosDeFecha(hoy) });
+    socket.emit('dias_disponibles', fechasDisponibles());
+    socket.emit('configuracion_actualizada', configuracion);
+    socket.emit('datos_actualizados', estadoActual);
+    emitirEstadoConexion(socket);
+
+    socket.on('solicitar_historico_dia', fecha => {
+        if (!isValidDate(fecha)) {
+            socket.emit('error_persistencia', 'La fecha solicitada no es válida.');
+            return;
+        }
+        socket.emit('historico_actualizado', { fecha, registros: registrosDeFecha(fecha) });
+    });
+
+    socket.on('enviar_comando', comandoJSON => {
+        if (!comandoJSON || typeof comandoJSON !== 'object' || Array.isArray(comandoJSON)) {
+            socket.emit('error_comando', 'El formato del comando no es válido.');
+            return;
+        }
+
+        const nuevaConfiguracion = {
+            modo: configuracion.modo,
+            colores: { ...configuracion.colores }
+        };
+
+        try {
+            if (comandoJSON.modo !== undefined) {
+                nuevaConfiguracion.modo = comandoJSON.modo;
+            }
+            if (comandoJSON.config_led !== undefined) {
+                const colores = comandoJSON.config_led;
+                for (const colorName of ['frio', 'neutro', 'calor']) {
+                    if (colores[colorName] !== undefined) {
+                        nuevaConfiguracion.colores[colorName] = rgbToHex(colores[colorName]);
+                    }
+                }
+            }
+            if (comandoJSON.modo !== undefined || comandoJSON.config_led !== undefined) {
+                persistirConfiguracion(nuevaConfiguracion);
+            }
+        } catch (error) {
+            console.error('Configuración recibida no válida:', error.message);
+            socket.emit('error_comando', error.message);
+            return;
+        }
+
+        publicarComando(comandoJSON, socket);
+
+        if (comandoJSON['acción'] === 'encender') {
+            estadoActual.sistema_encendido = true;
+            io.emit('datos_actualizados', estadoActual);
+        } else if (comandoJSON['acción'] === 'apagar') {
+            estadoActual.sistema_encendido = false;
+            estadoActual.ventilador = 'apagado';
+            io.emit('datos_actualizados', estadoActual);
+        }
+    });
+});
+
+const PORT = Number(process.env.PORT) || 3000;
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor euNICE corriendo en http://localhost:${PORT}`);
+});
+
+server.on('error', (error) => {
+    if (error.code !== 'EADDRINUSE') {
+        console.error(`No se pudo iniciar el servidor en el puerto ${PORT}:`, error);
+        mqttClient.end(true);
+        process.exitCode = 1;
+        return;
+    }
+
+    const request = http.get({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: '/',
+        timeout: 2000
+    }, (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+            body += chunk;
+        });
+        response.on('end', () => {
+            mqttClient.end(true);
+            if (response.statusCode === 200 && body.includes('<title>euNICE')) {
+                console.log(`euNICE ya está ejecutándose en http://localhost:${PORT}`);
+                return;
+            }
+
+            console.error(`El puerto ${PORT} está ocupado por otro servicio. Cierra ese servicio o inicia euNICE con PORT=3001.`);
+            process.exitCode = 1;
+        });
+    });
+
+    request.on('timeout', () => request.destroy());
+    request.on('error', () => {
+        mqttClient.end(true);
+        console.error(`El puerto ${PORT} está ocupado. Cierra el proceso que lo usa o inicia euNICE con PORT=3001.`);
+        process.exitCode = 1;
+    });
+});

@@ -1,0 +1,12 @@
+{"fecha":"2026-11-08","hora":"0:00:00","timestamp":"2026-11-07T23:00:00.000Z","temperatura":20.6,"humedad":51,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-08","hora":"2:00:00","timestamp":"2026-11-08T01:00:00.000Z","temperatura":19.9,"humedad":45,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-08","hora":"4:00:00","timestamp":"2026-11-08T03:00:00.000Z","temperatura":19.9,"humedad":40,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-08","hora":"6:00:00","timestamp":"2026-11-08T05:00:00.000Z","temperatura":20.6,"humedad":36,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-08","hora":"8:00:00","timestamp":"2026-11-08T07:00:00.000Z","temperatura":22,"humedad":36,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"10:00:00","timestamp":"2026-11-08T09:00:00.000Z","temperatura":23.5,"humedad":40,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"12:00:00","timestamp":"2026-11-08T11:00:00.000Z","temperatura":24.9,"humedad":45,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"14:00:00","timestamp":"2026-11-08T13:00:00.000Z","temperatura":25.6,"humedad":51,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"16:00:00","timestamp":"2026-11-08T15:00:00.000Z","temperatura":25.6,"humedad":56,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"18:00:00","timestamp":"2026-11-08T17:00:00.000Z","temperatura":24.9,"humedad":60,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"20:00:00","timestamp":"2026-11-08T19:00:00.000Z","temperatura":23.5,"humedad":60,"luz":"Apagado","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-08","hora":"22:00:00","timestamp":"2026-11-08T21:00:00.000Z","temperatura":22,"humedad":56,"luz":"Apagado","ventilador":"apagado","simulado":true}
