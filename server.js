@@ -1,14 +1,116 @@
+require('dotenv').config();
+
 const express = require('express');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 const { Server } = require('socket.io');
 const mqtt = require('mqtt');
+const webpush = require('web-push');
+const { obtenerSolicitudFeedback } = require('./feedback-notification');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
+app.set('trust proxy', 'loopback');
+app.use(express.json({ limit: '16kb' }));
+
+const sessionCookieName = 'eunice_session';
+const sessionDurationMs = 12 * 60 * 60 * 1000;
+const accessSessions = new Map();
+const loginAttempts = new Map();
+const accessUsername = process.env.EUNICE_ACCESS_USERNAME || 'Euniceprueba';
+const configuredPassword = process.env.EUNICE_ACCESS_PASSWORD;
+
+if (!configuredPassword || configuredPassword.length < 12) {
+    throw new Error('Configura EUNICE_ACCESS_PASSWORD en .env con al menos 12 caracteres.');
+}
+
+function coincideSecreto(valor, esperado) {
+    const recibido = Buffer.from(typeof valor === 'string' ? valor : '');
+    const referencia = Buffer.from(esperado);
+    return recibido.length === referencia.length && crypto.timingSafeEqual(recibido, referencia);
+}
+
+function getSessionToken(cookieHeader = '') {
+    const cookie = cookieHeader.split(';').map(part => part.trim())
+        .find(part => part.startsWith(`${sessionCookieName}=`));
+    return cookie ? cookie.slice(sessionCookieName.length + 1) : '';
+}
+
+function hasValidSession(cookieHeader) {
+    const token = getSessionToken(cookieHeader);
+    const expiresAt = accessSessions.get(token);
+    if (!expiresAt) return false;
+    if (expiresAt <= Date.now()) {
+        accessSessions.delete(token);
+        return false;
+    }
+    return true;
+}
+
+function setSessionCookie(response, request, token) {
+    const secure = request.secure ? '; Secure' : '';
+    response.setHeader(
+        'Set-Cookie',
+        `${sessionCookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${sessionDurationMs / 1000}${secure}`
+    );
+}
+
+app.post('/api/login', (request, response) => {
+    const ip = request.ip;
+    const attempt = loginAttempts.get(ip);
+    if (attempt?.blockedUntil > Date.now()) {
+        response.status(429).json({ error: 'Demasiados intentos. Espera 15 minutos e inténtalo de nuevo.' });
+        return;
+    }
+
+    const valid = coincideSecreto(request.body?.username, accessUsername)
+        && coincideSecreto(request.body?.password, configuredPassword);
+    if (!valid) {
+        const failures = (attempt?.failures || 0) + 1;
+        loginAttempts.set(ip, {
+            failures,
+            blockedUntil: failures >= 5 ? Date.now() + 15 * 60 * 1000 : 0
+        });
+        response.status(401).json({ error: 'El usuario o la contraseña no son correctos.' });
+        return;
+    }
+
+    loginAttempts.delete(ip);
+    const now = Date.now();
+    for (const [token, expiresAt] of accessSessions) {
+        if (expiresAt <= now) accessSessions.delete(token);
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    accessSessions.set(token, now + sessionDurationMs);
+    setSessionCookie(response, request, token);
+    response.status(200).json({ authenticated: true });
+});
+
+app.get('/api/session', (request, response) => {
+    response.json({ authenticated: hasValidSession(request.headers.cookie) });
+});
+
+app.post('/api/logout', (request, response) => {
+    accessSessions.delete(getSessionToken(request.headers.cookie));
+    response.setHeader(
+        'Set-Cookie',
+        `${sessionCookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${request.secure ? '; Secure' : ''}`
+    );
+    response.status(204).end();
+});
+
+app.use('/api', (request, response, next) => {
+    if (!hasValidSession(request.headers.cookie)) {
+        response.status(401).json({ error: 'Inicia sesión para continuar.' });
+        return;
+    }
+    next();
+});
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -18,8 +120,46 @@ const dataDirectory = process.env.EUNICE_DATA_DIR || path.join(__dirname, 'data'
 const historyFile = path.join(dataDirectory, 'records.jsonl');
 const dailyHistoryDirectory = path.join(dataDirectory, 'history');
 const settingsFile = path.join(dataDirectory, 'settings.json');
+const pushSubscriptionFile = path.join(dataDirectory, 'push-subscriptions.json');
+const vapidKeyFile = path.join(dataDirectory, 'vapid-keys.json');
 let mqttConnected = false;
 let ultimoDatoHardware = null;
+
+fs.mkdirSync(dataDirectory, { recursive: true });
+
+function cargarOCrearClavesVapid() {
+    const publicKeyEnv = process.env.VAPID_PUBLIC_KEY;
+    const privateKeyEnv = process.env.VAPID_PRIVATE_KEY;
+    if (Boolean(publicKeyEnv) !== Boolean(privateKeyEnv)) {
+        throw new Error('Configura juntas VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY, o deja ambas sin configurar.');
+    }
+    if (publicKeyEnv && privateKeyEnv) {
+        return { publicKey: publicKeyEnv, privateKey: privateKeyEnv };
+    }
+
+    if (fs.existsSync(vapidKeyFile)) {
+        const keys = JSON.parse(fs.readFileSync(vapidKeyFile, 'utf8'));
+        if (typeof keys.publicKey !== 'string' || typeof keys.privateKey !== 'string') {
+            throw new Error(`El archivo de claves VAPID no es válido: ${vapidKeyFile}`);
+        }
+        return keys;
+    }
+
+    const keys = webpush.generateVAPIDKeys();
+    const temporaryFile = `${vapidKeyFile}.tmp`;
+    fs.writeFileSync(temporaryFile, `${JSON.stringify(keys, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temporaryFile, vapidKeyFile);
+    console.info('Se han generado y guardado claves VAPID locales para las notificaciones push.');
+    return keys;
+}
+
+const { publicKey: vapidPublicKey, privateKey: vapidPrivateKey } = cargarOCrearClavesVapid();
+const pushConfigured = true;
+webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
+    vapidPublicKey,
+    vapidPrivateKey
+);
 
 const defaultSettings = {
     modo: 'automatico',
@@ -30,8 +170,124 @@ const defaultSettings = {
     }
 };
 
-fs.mkdirSync(dataDirectory, { recursive: true });
 fs.mkdirSync(dailyHistoryDirectory, { recursive: true });
+
+function isValidPushSubscription(subscription) {
+    if (
+        !subscription
+        || typeof subscription.endpoint !== 'string'
+        || typeof subscription.keys?.p256dh !== 'string'
+        || typeof subscription.keys?.auth !== 'string'
+    ) {
+        return false;
+    }
+
+    try {
+        return new URL(subscription.endpoint).protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+function cargarSuscripcionesPush() {
+    if (!fs.existsSync(pushSubscriptionFile)) return new Map();
+    const subscriptions = JSON.parse(fs.readFileSync(pushSubscriptionFile, 'utf8'));
+    if (!Array.isArray(subscriptions) || !subscriptions.every(isValidPushSubscription)) {
+        throw new Error(`El archivo de suscripciones push no es válido: ${pushSubscriptionFile}`);
+    }
+    return new Map(subscriptions.map(subscription => [subscription.endpoint, subscription]));
+}
+
+const suscripcionesPush = cargarSuscripcionesPush();
+
+function guardarSuscripcionesPush() {
+    const temporaryFile = `${pushSubscriptionFile}.tmp`;
+    fs.writeFileSync(temporaryFile, `${JSON.stringify([...suscripcionesPush.values()], null, 2)}\n`);
+    fs.renameSync(temporaryFile, pushSubscriptionFile);
+}
+
+app.get('/api/push/public-key', (request, response) => {
+    if (!pushConfigured) {
+        response.status(503).json({ error: 'El servidor todavía no está configurado para enviar notificaciones push.' });
+        return;
+    }
+    response.json({ publicKey: vapidPublicKey });
+});
+
+app.get('/api/push/status', (request, response) => {
+    response.json({ configured: pushConfigured });
+});
+
+app.post('/api/push-subscriptions', (request, response) => {
+    const subscription = request.body;
+    if (!isValidPushSubscription(subscription)) {
+        response.status(400).json({ error: 'La suscripción de notificaciones no es válida.' });
+        return;
+    }
+    const subscriptionAnterior = suscripcionesPush.get(subscription.endpoint);
+    suscripcionesPush.set(subscription.endpoint, subscription);
+    try {
+        guardarSuscripcionesPush();
+    } catch (error) {
+        if (subscriptionAnterior) {
+            suscripcionesPush.set(subscription.endpoint, subscriptionAnterior);
+        } else {
+            suscripcionesPush.delete(subscription.endpoint);
+        }
+        console.error('No se pudo guardar la suscripción push:', error.message);
+        response.status(500).json({ error: 'No se pudo guardar la suscripción en disco.' });
+        return;
+    }
+    ultimaTransicionFeedbackPush = '';
+    evaluarSolicitudFeedbackPush();
+    response.status(201).json({ subscribed: true });
+});
+
+app.delete('/api/push-subscriptions', (request, response) => {
+    const endpoint = request.body?.endpoint;
+    if (typeof endpoint !== 'string') {
+        response.status(400).json({ error: 'Falta el endpoint de la suscripción.' });
+        return;
+    }
+    const subscriptionAnterior = suscripcionesPush.get(endpoint);
+    suscripcionesPush.delete(endpoint);
+    try {
+        guardarSuscripcionesPush();
+    } catch (error) {
+        if (subscriptionAnterior) suscripcionesPush.set(endpoint, subscriptionAnterior);
+        console.error('No se pudo eliminar la suscripción push:', error.message);
+        response.status(500).json({ error: 'No se pudo actualizar la suscripción en disco.' });
+        return;
+    }
+    response.status(204).end();
+});
+
+async function enviarNotificacionPush(payload) {
+    if (!pushConfigured || suscripcionesPush.size === 0) return;
+
+    let subscriptionsExpired = false;
+    await Promise.all([...suscripcionesPush.entries()].map(async ([endpoint, subscription]) => {
+        try {
+            await webpush.sendNotification(subscription, JSON.stringify(payload));
+        } catch (error) {
+            if (error.statusCode === 404 || error.statusCode === 410) {
+                suscripcionesPush.delete(endpoint);
+                subscriptionsExpired = true;
+                console.info('Suscripción push caducada; se ha eliminado.');
+                return;
+            }
+            console.error('No se pudo enviar una notificación push:', error.message);
+        }
+    }));
+
+    if (subscriptionsExpired) {
+        try {
+            guardarSuscripcionesPush();
+        } catch (error) {
+            console.error('No se pudieron eliminar las suscripciones push caducadas:', error.message);
+        }
+    }
+}
 
 function isValidDate(date) {
     if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
@@ -358,6 +614,33 @@ function emitirEstadoConexion(destino = io) {
     });
 }
 
+let ultimaTransicionFeedbackPush = '';
+
+function evaluarSolicitudFeedbackPush() {
+    const solicitud = obtenerSolicitudFeedback({
+        modo: configuracion.modo,
+        sistemaEncendido: estadoActual.sistema_encendido,
+        temperatura: estadoActual.temperatura,
+        ventilador: estadoActual.ventilador
+    });
+    if (!solicitud) {
+        ultimaTransicionFeedbackPush = '';
+        return;
+    }
+
+    if (solicitud.transicion !== ultimaTransicionFeedbackPush) {
+        const accion = solicitud.accion === 'apagado'
+            ? 'apagar la climatización'
+            : solicitud.accion === 'calefaccion' ? 'activar la calefacción' : 'activar el aire acondicionado';
+        ultimaTransicionFeedbackPush = solicitud.transicion;
+        void enviarNotificacionPush({
+            title: 'euNICE necesita tu confirmación',
+            body: `La temperatura es ${estadoActual.temperatura} °C. ¿Quieres ${accion}?`,
+            url: '/?notificacion=feedback'
+        });
+    }
+}
+
 function publicarComando(comando, socket) {
     mqttClient.publish('euNICE/comando/sistema', JSON.stringify(comando), error => {
         if (error) {
@@ -624,9 +907,23 @@ mqttClient.on('message', (topic, message) => {
         if (msg === 'sistema_apagado') {
             estadoActual.sistema_encendido = false;
             estadoActual.ventilador = 'apagado';
+            ultimaTransicionFeedbackPush = '';
+            void enviarNotificacionPush({
+                title: 'euNICE: sistema apagado',
+                body: 'El sistema ambiental se ha apagado.',
+                url: '/'
+            });
         } else if (
             msg === 'sistema_encendido'
-            || msg === 'frio_custom'
+        ) {
+            estadoActual.sistema_encendido = true;
+            void enviarNotificacionPush({
+                title: 'euNICE: sistema encendido',
+                body: 'El sistema ambiental se ha encendido.',
+                url: '/'
+            });
+        } else if (
+            msg === 'frio_custom'
             || msg === 'calor_custom'
             || msg === 'neutro_custom'
         ) {
@@ -646,8 +943,20 @@ mqttClient.on('message', (topic, message) => {
         });
     }
 
+    if (topic === 'euNICE/data/temperatura' || topic === 'euNICE/data/ventilador') {
+        evaluarSolicitudFeedbackPush();
+    }
+
     io.emit('datos_actualizados', estadoActual);
     emitirEstadoConexion();
+});
+
+io.use((socket, next) => {
+    if (hasValidSession(socket.handshake.headers.cookie)) {
+        next();
+        return;
+    }
+    next(new Error('Autenticación requerida.'));
 });
 
 io.on('connection', socket => {
@@ -714,6 +1023,11 @@ io.on('connection', socket => {
 const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => {
     console.log(`🚀 Servidor euNICE corriendo en http://localhost:${PORT}`);
+    if (PORT === 3000) {
+        console.log('📱 Acceso remoto (Tailscale Funnel): https://eunice.taild05234.ts.net/');
+    } else {
+        console.log('ℹ️ Tailscale Funnel está configurado para el puerto 3000; el enlace remoto requiere PORT=3000.');
+    }
 });
 
 server.on('error', (error) => {

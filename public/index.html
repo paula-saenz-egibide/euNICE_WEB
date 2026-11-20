@@ -4,19 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#f4f6f2">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="euNICE">
+    <link rel="icon" href="/icon-512.png?v=6" type="image/png">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=6">
     <title>euNICE — Control ambiental</title>
     <script>
         document.documentElement.dataset.theme = localStorage.getItem('eunice-tema') || 'light';
     </script>
-    <link rel="stylesheet" href="/styles.css?v=25">
+    <link rel="stylesheet" href="/styles.css?v=29">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
+    <section id="login-screen" class="login-screen" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <form id="login-form" class="login-card">
+            <img class="marca-simbolo" src="/brand-logo.png?v=6" alt="">
+            <h1 id="login-title">Acceso a euNICE</h1>
+            <p>Introduce el usuario y la contraseña de acceso.</p>
+            <label for="login-username">Usuario</label>
+            <input id="login-username" name="username" type="text" autocomplete="username" required>
+            <label for="login-password">Contraseña</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+            <button class="boton-principal" type="submit">Entrar</button>
+            <p id="login-message" class="login-message" role="status" aria-live="polite"></p>
+        </form>
+    </section>
+
     <div id="pantalla-inicio" class="pantalla activa">
         <main class="inicio-layout">
             <a class="marca inicio-marca" href="/" aria-label="euNICE inicio">
-                <span class="marca-simbolo" aria-hidden="true"><span></span><span></span><span></span></span>
+                <img class="marca-simbolo" src="/brand-logo.png?v=6" alt="">
                 <span>euNICE</span>
             </a>
             <section class="inicio-mensaje">
@@ -115,7 +134,7 @@
     <div id="pantalla-app" class="pantalla">
         <header class="barra-superior">
             <a class="marca" href="#" onclick="navegar('pantalla-inicio'); return false;" aria-label="Volver al inicio">
-                <span class="marca-simbolo" aria-hidden="true"><span></span><span></span><span></span></span>
+                <img class="marca-simbolo" src="/brand-logo.png?v=6" alt="">
                 <span>euNICE</span>
             </a>
             <div class="barra-contexto">
@@ -246,6 +265,20 @@
                         </article>
                         <article class="panel card-config">
                             <div class="config-cabecera">
+                                <h2>Notificaciones del móvil</h2>
+                            </div>
+                            <p id="push-status" role="status" aria-live="polite">
+                                Comprueba si este navegador admite notificaciones.
+                            </p>
+                            <button id="push-toggle" class="boton-secundario" type="button">
+                                Activar notificaciones
+                            </button>
+                            <button id="logout-button" class="boton-secundario" type="button">
+                                Cerrar sesión
+                            </button>
+                        </article>
+                        <article class="panel card-config">
+                            <div class="config-cabecera">
                                 <h2>Tema</h2>
                             </div>
                             <div class="tema-control">
@@ -315,6 +348,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=11"></script>
+    <script src="/app.js?v=12"></script>
 </body>
 </html>

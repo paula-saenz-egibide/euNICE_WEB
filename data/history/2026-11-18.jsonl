@@ -1,0 +1,12 @@
+{"fecha":"2026-11-18","hora":"12:00:00 AM","timestamp":"2026-11-17T23:00:00.000Z","temperatura":25.3,"humedad":58,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-18","hora":"2:00:00 AM","timestamp":"2026-11-18T01:00:00.000Z","temperatura":24.9,"humedad":54,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-18","hora":"4:00:00 AM","timestamp":"2026-11-18T03:00:00.000Z","temperatura":23.8,"humedad":48,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-18","hora":"6:00:00 AM","timestamp":"2026-11-18T05:00:00.000Z","temperatura":22.3,"humedad":42,"luz":"Apagado","ventilador":"calefaccion","simulado":true}
+{"fecha":"2026-11-18","hora":"8:00:00 AM","timestamp":"2026-11-18T07:00:00.000Z","temperatura":20.8,"humedad":38,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"10:00:00 AM","timestamp":"2026-11-18T09:00:00.000Z","temperatura":19.7,"humedad":36,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"12:00:00 PM","timestamp":"2026-11-18T11:00:00.000Z","temperatura":19.3,"humedad":38,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"2:00:00 PM","timestamp":"2026-11-18T13:00:00.000Z","temperatura":19.7,"humedad":42,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"4:00:00 PM","timestamp":"2026-11-18T15:00:00.000Z","temperatura":20.8,"humedad":48,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"6:00:00 PM","timestamp":"2026-11-18T17:00:00.000Z","temperatura":22.3,"humedad":54,"luz":"Encender luces","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"8:00:00 PM","timestamp":"2026-11-18T19:00:00.000Z","temperatura":23.8,"humedad":58,"luz":"Apagado","ventilador":"apagado","simulado":true}
+{"fecha":"2026-11-18","hora":"10:00:00 PM","timestamp":"2026-11-18T21:00:00.000Z","temperatura":24.9,"humedad":60,"luz":"Apagado","ventilador":"apagado","simulado":true}

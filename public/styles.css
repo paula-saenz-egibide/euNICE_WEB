@@ -113,28 +113,13 @@ input:focus-visible {
 }
 
 .marca-simbolo {
-    position: relative;
-    display: inline-flex;
-    width: 30px;
-    height: 30px;
-    align-items: end;
-    justify-content: center;
-    gap: 3px;
-    padding: 6px;
-    overflow: hidden;
-    border-radius: 10px;
-    background: var(--primario);
+    display: block;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    border-radius: 11px;
+    object-fit: cover;
 }
-
-.marca-simbolo span {
-    width: 4px;
-    border-radius: 4px 4px 1px 1px;
-    background: #f8faf6;
-}
-
-.marca-simbolo span:nth-child(1) { height: 9px; transform: rotate(-18deg); }
-.marca-simbolo span:nth-child(2) { height: 15px; }
-.marca-simbolo span:nth-child(3) { height: 11px; transform: rotate(18deg); }
 
 .eyebrow {
     margin: 0 0 9px;
@@ -1895,3 +1880,42 @@ input[type="color"] {
         transition-duration: 0.01ms !important;
     }
 }
+
+.login-screen {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: var(--fondo, #f3f5f0);
+}
+
+body.autenticado .login-screen { display: none; }
+body:not(.autenticado) > :not(#login-screen) { visibility: hidden; }
+
+.login-card {
+    display: grid;
+    width: min(100%, 400px);
+    gap: 14px;
+    padding: 32px;
+    border: 1px solid var(--borde, #dce4dc);
+    border-radius: 20px;
+    background: var(--superficie, #fff);
+    box-shadow: 0 18px 60px rgba(25, 40, 31, 0.14);
+}
+
+.login-card .marca-simbolo { width: 50px; height: 50px; }
+.login-card h1 { margin: 0; color: var(--texto, #263f35); }
+.login-card p { margin: 0; color: var(--texto-secundario, #77827c); line-height: 1.5; }
+.login-card label { color: var(--texto, #263f35); font-weight: 600; }
+.login-card input {
+    min-height: 46px;
+    padding: 10px 12px;
+    border: 1px solid var(--borde, #dce4dc);
+    border-radius: 10px;
+    background: var(--superficie, #fff);
+    color: var(--texto, #263f35);
+}
+.login-card .boton-principal { min-height: 46px; }
+.login-card .login-message { color: var(--alerta, #bb6754); }

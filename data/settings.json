@@ -1,8 +1,8 @@
 {
   "modo": "feedback",
   "colores": {
-    "frio": "#8181fe",
-    "neutro": "#a6ff00",
-    "calor": "#ff00bb"
+    "frio": "#0000ff",
+    "neutro": "#00ff00",
+    "calor": "#ff0000"
   }
 }

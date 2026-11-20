@@ -82,6 +82,10 @@ web_modules/
 .env.test.local
 .env.production.local
 .env.local
+data/push-subscriptions.json
+data/push-subscriptions.json.tmp
+data/vapid-keys.json
+data/vapid-keys.json.tmp
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

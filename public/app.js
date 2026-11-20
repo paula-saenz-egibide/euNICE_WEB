@@ -1,4 +1,4 @@
-const socket = io();
+const socket = io({ autoConnect: false });
 
 let sistemaActivo = false;
 let modoActual = 'automatico';
@@ -120,6 +120,9 @@ socket.on('error_persistencia', mensaje => alert(mensaje));
 socket.on('error_comando', mensaje => {
     interruptorLampara.checked = sistemaActivo;
     alert(mensaje);
+});
+socket.on('connect_error', error => {
+    console.error('No se pudo abrir la conexión en tiempo real:', error.message);
 });
 
 interruptorLampara.addEventListener('change', () => {
@@ -467,3 +470,172 @@ async function exportarExcel() {
         alert(`No se pudo descargar el Excel: ${error.message}`);
     }
 }
+
+const loginForm = document.getElementById('login-form');
+const loginUsername = document.getElementById('login-username');
+const loginPassword = document.getElementById('login-password');
+const loginMessage = document.getElementById('login-message');
+const pushStatus = document.getElementById('push-status');
+const pushToggle = document.getElementById('push-toggle');
+let registroServiceWorker = null;
+let suscripcionPush = null;
+
+function mostrarAplicacion() {
+    document.body.classList.add('autenticado');
+    socket.connect();
+    prepararNotificaciones();
+    if (new URLSearchParams(window.location.search).has('notificacion')) {
+        navegar('pantalla-app');
+    }
+}
+
+function esIOS() {
+    return /iPad|iPhone|iPod/.test(navigator.userAgent)
+        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function estaInstaladaComoPWA() {
+    return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+async function prepararNotificaciones() {
+    if (esIOS() && !estaInstaladaComoPWA()) {
+        pushStatus.innerText = 'En iPhone, añade euNICE a la pantalla de inicio antes de activar avisos.';
+        pushToggle.disabled = true;
+        return;
+    }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+        pushStatus.innerText = 'Este navegador no admite notificaciones web push.';
+        pushToggle.disabled = true;
+        return;
+    }
+
+    try {
+        registroServiceWorker = await navigator.serviceWorker.register('/service-worker.js');
+        suscripcionPush = await registroServiceWorker.pushManager.getSubscription();
+        if (!suscripcionPush) {
+            const statusResponse = await fetch('/api/push/status');
+            const statusResult = await statusResponse.json();
+            if (!statusResponse.ok || !statusResult.configured) {
+                pushStatus.innerText = 'El servidor todavía no está configurado para enviar notificaciones push.';
+                pushToggle.disabled = true;
+                return;
+            }
+        }
+        pushToggle.disabled = false;
+        pushToggle.innerText = suscripcionPush ? 'Desactivar notificaciones' : 'Activar notificaciones';
+        pushStatus.innerText = suscripcionPush
+            ? 'Avisos activos para solicitudes de confirmación y cambios de estado.'
+            : 'Activa los avisos para solicitudes de confirmación y cambios de estado.';
+    } catch (error) {
+        console.error('No se pudo preparar el service worker:', error);
+        pushStatus.innerText = `No se pudieron preparar las notificaciones: ${error.message}`;
+        pushToggle.disabled = true;
+    }
+}
+
+function convertirClavePublica(clave) {
+    const base64 = clave.replace(/-/g, '+').replace(/_/g, '/');
+    const bytes = window.atob(base64);
+    return Uint8Array.from(bytes, caracter => caracter.charCodeAt(0));
+}
+
+async function alternarNotificaciones() {
+    pushToggle.disabled = true;
+    try {
+        if (!registroServiceWorker) {
+            throw new Error('El service worker todavía no está preparado.');
+        }
+
+        if (suscripcionPush) {
+            const response = await fetch('/api/push-subscriptions', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: suscripcionPush.endpoint })
+            });
+            if (!response.ok) throw new Error((await response.json()).error || 'No se pudo desactivar el aviso.');
+            await suscripcionPush.unsubscribe();
+            suscripcionPush = null;
+        } else {
+            const permissionPromise = Notification.permission === 'default'
+                ? Notification.requestPermission()
+                : Promise.resolve(Notification.permission);
+            const keyResponsePromise = fetch('/api/push/public-key');
+            const [permission, keyResponse] = await Promise.all([permissionPromise, keyResponsePromise]);
+            const keyResult = await keyResponse.json();
+            if (!keyResponse.ok) throw new Error(keyResult.error || 'No se pudo cargar la clave push.');
+            if (permission !== 'granted') throw new Error('No se concedió permiso para las notificaciones.');
+
+            suscripcionPush = await registroServiceWorker.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: convertirClavePublica(keyResult.publicKey)
+            });
+            const response = await fetch('/api/push-subscriptions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(suscripcionPush)
+            });
+            if (!response.ok) {
+                await suscripcionPush.unsubscribe();
+                suscripcionPush = null;
+                throw new Error((await response.json()).error || 'No se pudo guardar la suscripción.');
+            }
+        }
+        await prepararNotificaciones();
+    } catch (error) {
+        console.error('No se pudo cambiar la suscripción push:', error);
+        pushStatus.innerText = error.message;
+    } finally {
+        pushToggle.disabled = false;
+    }
+}
+
+loginForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    loginMessage.innerText = '';
+    try {
+        const response = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                username: loginUsername.value,
+                password: loginPassword.value
+            })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'No se pudo iniciar sesión.');
+        loginPassword.value = '';
+        mostrarAplicacion();
+    } catch (error) {
+        loginMessage.innerText = error.message;
+    }
+});
+
+pushToggle.addEventListener('click', alternarNotificaciones);
+
+document.getElementById('logout-button').addEventListener('click', async () => {
+    try {
+        const response = await fetch('/api/logout', { method: 'POST' });
+        if (!response.ok) throw new Error('No se pudo cerrar la sesión.');
+        window.location.reload();
+    } catch (error) {
+        alert(error.message);
+    }
+});
+
+fetch('/api/session')
+    .then(response => {
+        if (!response.ok) throw new Error('No se pudo comprobar la sesión.');
+        return response.json();
+    })
+    .then(result => {
+        if (result.authenticated) {
+            mostrarAplicacion();
+        } else {
+            loginUsername.focus();
+        }
+    })
+    .catch(error => {
+        console.error('No se pudo comprobar la sesión:', error);
+        loginMessage.innerText = error.message;
+    });
