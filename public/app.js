@@ -477,6 +477,7 @@ const loginPassword = document.getElementById('login-password');
 const loginMessage = document.getElementById('login-message');
 const pushStatus = document.getElementById('push-status');
 const pushToggle = document.getElementById('push-toggle');
+const pushTest = document.getElementById('push-test');
 let registroServiceWorker = null;
 let suscripcionPush = null;
 
@@ -502,11 +503,13 @@ async function prepararNotificaciones() {
     if (esIOS() && !estaInstaladaComoPWA()) {
         pushStatus.innerText = 'En iPhone, añade euNICE a la pantalla de inicio antes de activar avisos.';
         pushToggle.disabled = true;
+        pushTest.disabled = true;
         return;
     }
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
         pushStatus.innerText = 'Este navegador no admite notificaciones web push.';
         pushToggle.disabled = true;
+        pushTest.disabled = true;
         return;
     }
 
@@ -519,10 +522,12 @@ async function prepararNotificaciones() {
             if (!statusResponse.ok || !statusResult.configured) {
                 pushStatus.innerText = 'El servidor todavía no está configurado para enviar notificaciones push.';
                 pushToggle.disabled = true;
+                pushTest.disabled = true;
                 return;
             }
         }
         pushToggle.disabled = false;
+        pushTest.disabled = !suscripcionPush;
         pushToggle.innerText = suscripcionPush ? 'Desactivar notificaciones' : 'Activar notificaciones';
         pushStatus.innerText = suscripcionPush
             ? 'Avisos activos para solicitudes de confirmación y cambios de estado.'
@@ -531,6 +536,7 @@ async function prepararNotificaciones() {
         console.error('No se pudo preparar el service worker:', error);
         pushStatus.innerText = `No se pudieron preparar las notificaciones: ${error.message}`;
         pushToggle.disabled = true;
+        pushTest.disabled = true;
     }
 }
 
@@ -590,6 +596,28 @@ async function alternarNotificaciones() {
     }
 }
 
+async function enviarNotificacionPrueba() {
+    if (!suscripcionPush) return;
+
+    pushTest.disabled = true;
+    pushStatus.innerText = 'Enviando una notificación de prueba...';
+    try {
+        const response = await fetch('/api/push/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: suscripcionPush.endpoint })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'No se pudo enviar la notificación de prueba.');
+        pushStatus.innerText = 'Prueba enviada. Comprueba las notificaciones del móvil.';
+    } catch (error) {
+        console.error('No se pudo enviar la notificación push de prueba:', error);
+        pushStatus.innerText = error.message;
+    } finally {
+        pushTest.disabled = !suscripcionPush;
+    }
+}
+
 loginForm.addEventListener('submit', async event => {
     event.preventDefault();
     loginMessage.innerText = '';
@@ -612,6 +640,7 @@ loginForm.addEventListener('submit', async event => {
 });
 
 pushToggle.addEventListener('click', alternarNotificaciones);
+pushTest.addEventListener('click', enviarNotificacionPrueba);
 
 document.getElementById('logout-button').addEventListener('click', async () => {
     try {

@@ -18,6 +18,8 @@ self.addEventListener('push', event => {
         body: payload.body || 'Hay una actualización del sistema.',
         icon: '/icon-192.png?v=6',
         badge: '/icon-192.png?v=6',
+        requireInteraction: true,
+        vibrate: [200, 100, 200],
         data: { url: payload.url || '/' }
     }));
 });

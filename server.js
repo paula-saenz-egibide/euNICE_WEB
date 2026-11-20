@@ -262,13 +262,51 @@ app.delete('/api/push-subscriptions', (request, response) => {
     response.status(204).end();
 });
 
+app.post('/api/push/test', async (request, response) => {
+    const endpoint = request.body?.endpoint;
+    if (typeof endpoint !== 'string') {
+        response.status(400).json({ error: 'Falta el dispositivo para enviar la prueba.' });
+        return;
+    }
+
+    const subscription = suscripcionesPush.get(endpoint);
+    if (!subscription) {
+        response.status(404).json({ error: 'Este dispositivo no está suscrito. Activa de nuevo las notificaciones.' });
+        return;
+    }
+
+    try {
+        await webpush.sendNotification(subscription, JSON.stringify({
+            title: 'euNICE: notificación de prueba',
+            body: 'Las notificaciones push de este dispositivo están funcionando.',
+            url: '/'
+        }), { urgency: 'high' });
+        response.status(200).json({ sent: true });
+    } catch (error) {
+        if (error.statusCode === 404 || error.statusCode === 410) {
+            suscripcionesPush.delete(endpoint);
+            try {
+                guardarSuscripcionesPush();
+            } catch (saveError) {
+                console.error('No se pudo eliminar la suscripción push caducada:', saveError.message);
+            }
+        }
+        console.error('No se pudo enviar la notificación push de prueba:', error.message);
+        response.status(502).json({
+            error: error.statusCode === 404 || error.statusCode === 410
+                ? 'La suscripción de este dispositivo ha caducado. Desactiva y vuelve a activar las notificaciones.'
+                : 'El proveedor push no aceptó la notificación. Revisa la conexión y vuelve a intentarlo.'
+        });
+    }
+});
+
 async function enviarNotificacionPush(payload) {
     if (!pushConfigured || suscripcionesPush.size === 0) return;
 
     let subscriptionsExpired = false;
     await Promise.all([...suscripcionesPush.entries()].map(async ([endpoint, subscription]) => {
         try {
-            await webpush.sendNotification(subscription, JSON.stringify(payload));
+            await webpush.sendNotification(subscription, JSON.stringify(payload), { urgency: 'high' });
         } catch (error) {
             if (error.statusCode === 404 || error.statusCode === 410) {
                 suscripcionesPush.delete(endpoint);
@@ -1022,11 +1060,11 @@ io.on('connection', socket => {
 
 const PORT = Number(process.env.PORT) || 3000;
 server.listen(PORT, () => {
-    console.log(`🚀 Servidor euNICE corriendo en http://localhost:${PORT}`);
+    console.log('✅ Servidor euNICE activado correctamente.');
     if (PORT === 3000) {
-        console.log('📱 Acceso remoto (Tailscale Funnel): https://eunice.taild05234.ts.net/');
+        console.log('🌐 URL de acceso (Tailscale Funnel): https://eunice.taild05234.ts.net/');
     } else {
-        console.log('ℹ️ Tailscale Funnel está configurado para el puerto 3000; el enlace remoto requiere PORT=3000.');
+        console.log('⚠️ Tailscale Funnel requiere PORT=3000 para publicar esta web.');
     }
 });
 
@@ -1052,7 +1090,12 @@ server.on('error', (error) => {
         response.on('end', () => {
             mqttClient.end(true);
             if (response.statusCode === 200 && body.includes('<title>euNICE')) {
-                console.log(`euNICE ya está ejecutándose en http://localhost:${PORT}`);
+                console.log('✅ Servidor euNICE ya está activado.');
+                if (PORT === 3000) {
+                    console.log('🌐 URL de acceso (Tailscale Funnel): https://eunice.taild05234.ts.net/');
+                } else {
+                    console.log(`ℹ️ euNICE está activo en el puerto ${PORT}; Tailscale Funnel requiere PORT=3000.`);
+                }
                 return;
             }
 
